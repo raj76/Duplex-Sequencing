@@ -32,6 +32,7 @@ optional arguments:
 '''
 
 import sys
+import re
 from argparse import ArgumentParser
 from Bio import SeqIO
 
@@ -102,6 +103,24 @@ class fastqWriter:
         self.file.close()
         return(True)
 
+class fastaWriter:
+    def __init__(self, outFile):
+        self.file=outFile
+        self.firstLine=True
+    
+    def write(self, name, seq):
+        if self.firstLine==True:
+            self.file.write(">" + name)
+            self.firstLine=False
+        else:
+            self.file.write("\n>" + name)
+        self.file.write("\n" + seq)
+        return(True)
+    
+    def close(self):
+        self.file.close()
+        return(True)
+
 
 def tagExtractFxn(x, blen):
     '''this is the function that extracts the UID tags from both the 
@@ -110,9 +129,19 @@ def tagExtractFxn(x, blen):
     then assigns tag1 from the 5'-end to length of the UID tag for 
     read1 and then read 2.
     '''
-    return(x[0][:blen], x[1][:blen])
+    ###return(x[0][:blen], x[1][:blen])
+    return(tagMatch(x[0]), tagMatch(x[1]))
 
-
+def tagMatch(seq):
+    pattern = '(?P<stag>[ATCG]{12})CAGTA(?P<templatestart>[ATCG]{18})(?P<motifs>[ATCG]{40})(?P<templateend>[ATCG]{18})TACTG(?P<rtag>[ATCG]{12})'
+    match = re.search(pattern, seq)
+    if match:
+        return(match.group(0), match.groupdict())
+    else:
+        return None
+    
+    ##return(match.group('stag'), match.group('templatestart'), match.group('motifs'), match.group('templateend'), match.group('rtag')
+    
 def hdrRenameFxn(x, y, z):
     '''this function renames the header with the formatting of 
     *header coordinates,etc*, *index seq*, *tag from read1*, *tag from read2*, *spacer from this read*
@@ -135,8 +164,8 @@ def main():
 
     in1=fastQItterator(open(o.infile1, 'rU'))
     in2=fastQItterator(open(o.infile2, 'rU'))
-    out1=fastqWriter(open(o.outfile1, 'w'))
-    out2=fastqWriter(open(o.outfile2, 'w'))
+    out1=fastaWriter(open(o.outfile1, 'w'))
+    out2=fastaWriter(open(o.outfile2, 'w'))
 
     ctr=0
     nospacer = 0
@@ -157,18 +186,25 @@ def main():
                 nospacer += 1
             else:
                 #extract tags
-                tag1, tag2 = tagExtractFxn((read1.seq, read2.seq),o.blength)
+                r1parts, r2parts = tagExtractFxn((read1.seq, read2.seq),o.blength)
+                if not r1parts or not r2parts:
+                    continue
+                readName = read1.name
                 
                 #header reconstruction
-                read1.name = hdrRenameFxn(read1.name, tag1, tag2) 
-                read2.name = hdrRenameFxn(read2.name, tag1, tag2)
-                
+                read1.name = hdrRenameFxn(read1.name, r1parts[1]['stag'], r2parts[1]['stag']) 
+                read2.name = hdrRenameFxn(read2.name, r1parts[1]['stag'], r2parts[1]['stag']) 
+
+                tag1 = r1parts[1]['stag']
+                tag2 = r2parts[1]['stag']
                 #fastq reconstruction
                 if (tag1.isalpha() and tag1.count('N') == 0) and (tag2.isalpha() and tag2.count('N') == 0):
-                    rOut1 = read1[o.blength + o.slength:]
-                    rOut2 = read2[o.blength + o.slength:]
-                    out1.write(rOut1)
-                    out2.write(rOut2)
+                    rOut1 = r1parts[1]['templatestart'] + r1parts[1]['motifs'] + r1parts[1]['templateend']
+                    rOut2 = r2parts[1]['templatestart'] + r2parts[1]['motifs'] + r2parts[1]['templateend']
+                    out1.write(read1.name, rOut1)
+                    out2.write(read2.name, rOut2)
+                    encodedStr = "\t".join((readName, r1parts[1]['stag'], r2parts[1]['stag'], r1parts[1]['templatestart'], r1parts[1]['motifs'], r2parts[1]['motifs']))
+                    print encodedStr
                     goodreads += 1
                 else: 
                     badtag += 1

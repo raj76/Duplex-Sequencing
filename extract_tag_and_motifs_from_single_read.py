@@ -32,9 +32,10 @@ optional arguments:
 '''
 
 import sys
+import re
 from argparse import ArgumentParser
 from Bio import SeqIO
-
+from Bio.Seq import Seq
 
 class fastQRead:
     def __init__(self, in1, in2, in3, in4):
@@ -102,6 +103,30 @@ class fastqWriter:
         self.file.close()
         return(True)
 
+class fastaWriter:
+    def __init__(self, outFile):
+        self.file=outFile
+        self.firstLine=True
+    
+    def write(self, name, seq):
+        if self.firstLine==True:
+            self.file.write(">" + name)
+            self.firstLine=False
+        else:
+            self.file.write("\n>" + name)
+        self.file.write("\n" + seq)
+        return(True)
+    
+    def close(self):
+        self.file.close()
+        return(True)
+
+def revcomp(seq):
+    
+    #create a sequence object
+    my_seq = Seq(seq)
+    
+    return str(my_seq.reverse_complement())
 
 def tagExtractFxn(x, blen):
     '''this is the function that extracts the UID tags from both the 
@@ -110,9 +135,19 @@ def tagExtractFxn(x, blen):
     then assigns tag1 from the 5'-end to length of the UID tag for 
     read1 and then read 2.
     '''
-    return(x[0][:blen], x[1][:blen])
+    ###return(x[0][:blen], x[1][:blen])
+    return(tagMatch(x))
 
-
+def tagMatch(seq):
+    pattern = '(?P<stag>[ATCG]{12})CAGTA(?P<templatestart>[ATCG]{18})(?P<motifs>[ATCG]{40})(?P<templateend>[ATCG]{18})TACTG(?P<rtag>[ATCG]{12})'
+    match = re.search(pattern, seq)
+    if match:
+        return(match.group(0), match.groupdict())
+    else:
+        return None
+    
+    ##return(match.group('stag'), match.group('templatestart'), match.group('motifs'), match.group('templateend'), match.group('rtag')
+    
 def hdrRenameFxn(x, y, z):
     '''this function renames the header with the formatting of 
     *header coordinates,etc*, *index seq*, *tag from read1*, *tag from read2*, *spacer from this read*
@@ -123,9 +158,7 @@ def hdrRenameFxn(x, y, z):
 def main():
     parser = ArgumentParser()
     parser.add_argument('--infile1', dest = 'infile1', help = 'First input raw fastq file.  ', required=True)
-    parser.add_argument('--infile2', dest = 'infile2', help = 'Second input raw fastq file.  ', required=True)
     parser.add_argument('--outfile1', dest = 'outfile1', help = 'Output file for first fastq reads.  ', required=True)
-    parser.add_argument('--outfile2', dest = 'outfile2', help = 'Output file for second fastq reads.  ', required=True)
     parser.add_argument('--barcode_length', type = int, default = 12, dest = 'blength', help = 'Length of the duplex tag sequence. [12]')
     parser.add_argument('--spacer_length', type = int, default = 5, dest = 'slength', help = 'Length of the spacer sequences used. [5]')
     parser.add_argument('--read_out', type = int, default = 1000000, dest = 'rOut', help = 'How often you want to be told what the program is doing. [1000000]')
@@ -134,9 +167,7 @@ def main():
 
 
     in1=fastQItterator(open(o.infile1, 'rU'))
-    in2=fastQItterator(open(o.infile2, 'rU'))
-    out1=fastqWriter(open(o.outfile1, 'w'))
-    out2=fastqWriter(open(o.outfile2, 'w'))
+    out1=fastaWriter(open(o.outfile1, 'w'))
 
     ctr=0
     nospacer = 0
@@ -147,30 +178,38 @@ def main():
 
     while isEOF==False:
         read1 = in1.next()
-        read2 = in2.next()
-        if read1 == "EOF" or read2 == "EOF":
+
+        if read1 == "EOF":
             isEOF = True
         else:
             
             ctr += 1
-            if o.adapterSeq != None and (read1.seq[o.blength:o.blength + o.slength] != o.adapterSeq or read2[o.blength:o.blength + o.slength] != o.adapterSeq):
+            if o.adapterSeq != None and (read1.seq[o.blength:o.blength + o.slength] != o.adapterSeq):
                 nospacer += 1
             else:
                 #extract tags
-                tag1, tag2 = tagExtractFxn((read1.seq, read2.seq),o.blength)
+                r1parts = tagExtractFxn(read1.seq,o.blength)
+                if not r1parts:
+                    continue
+
+                ftag = r1parts[1]['stag']
+                rtag = revcomp(r1parts[1]['rtag'])
                 
                 #header reconstruction
-                read1.name = hdrRenameFxn(read1.name, tag1, tag2) 
-                read2.name = hdrRenameFxn(read2.name, tag1, tag2)
-                
+                #read1.name = hdrRenameFxn(read1.name, ftag, rtag)
+                readName = read1.name
+                read1.name = ftag + rtag + "-" + r1parts[1]['templatestart'][:6]
+
+                tag1 = ftag
+
                 #fastq reconstruction
-                if (tag1.isalpha() and tag1.count('N') == 0) and (tag2.isalpha() and tag2.count('N') == 0):
-                    rOut1 = read1[o.blength + o.slength:]
-                    rOut2 = read2[o.blength + o.slength:]
-                    out1.write(rOut1)
-                    out2.write(rOut2)
+                if (tag1.isalpha() and tag1.count('N') == 0) :
+                    rOut1 = r1parts[1]['motifs']
+                    out1.write(read1.name, rOut1)
+                    encodedStr = "\t".join((readName, read1.name, r1parts[1]['motifs']))
+                    print encodedStr
                     goodreads += 1
-                else: 
+                else:
                     badtag += 1
             if ctr%o.rOut==0:
                 sys.stderr.write("Total sequences processed: %s\n" % (ctr))
@@ -182,9 +221,8 @@ def main():
                 oldBad = badtag
 
     in1.close()
-    in2.close()
     out1.close()
-    out2.close()
+
 
     sys.stderr.write("Summary statistics:\n")
     sys.stderr.write("Total sequences processed: %s\n" % (ctr))
