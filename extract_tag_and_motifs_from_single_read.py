@@ -139,7 +139,7 @@ def tagExtractFxn(x, blen):
     return(tagMatch(x))
 
 def tagMatch(seq):
-    pattern = '(?P<stag>[ATCG]{12})CAGTA(?P<templatestart>[ATCG]{18})(?P<motifs>[ATCG]{40})(?P<templateend>[ATCG]{18})TACTG(?P<rtag>[ATCG]{12})'
+    pattern = '(?P<stag>[ATCG]{14})CAGTA(?P<templatestart>[ATCG]{18})(?P<motifs>[ATCG]{40})(?P<templateend>[ATCG]{18})TACTG(?P<rtag>[ATCG]{14})'
     match = re.search(pattern, seq)
     if match:
         return(match.group(0), match.groupdict())
